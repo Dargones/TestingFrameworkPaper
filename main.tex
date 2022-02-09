@@ -7,6 +7,7 @@
 \usepackage{subcaption}
 \usepackage{hyperref}
 \usepackage{xcolor}
+\usepackage{makecell}
 \usepackage{float}
 \usepackage{dafny}
 \usepackage{textcomp}
@@ -23,10 +24,10 @@
 \maketitle  
 \begin{abstract}
 % Abstract should be 15--250 words
-Dafny is a verification-aware programming language that can automatically prove that the implementation of a particular method satisfies its specification. 
+Dafny is a verification-aware programming language that can automatically prove that the implementation of a particular function satisfies its specification. 
 Dafny provides compilers for generating executable code in different target languages, such as C\# or Java. 
 A target-language executable generated from Dafny source must, in theory, exhibit the runtime behavior proven by Dafny verifier. 
-In practice, however, compiler bugs and incorrect specification of external methods can lead to the executable producing a result that is different from the one expected. 
+In practice, however, compiler bugs and incorrect specification of external functions can lead to the executable producing a result that is different from the one expected. 
 To help ensure that the verified behavior carries over to the target language, we propose to introduce runtime tests to Dafny. 
 Supported features include mocking and parameterized tests.
 \keywords{Dafny \and Testing}
@@ -35,15 +36,15 @@ Supported features include mocking and parameterized tests.
 \setcounter{footnote}{0} 
 
 
-\section{Introduction}
+%\section{Introduction}
 
 \section{Motivation}
-\label{motivation}
+\label{sec:motivation}
 
 An effective testing framework supports several strategies and levels of testing, which makes it versatile enough to be used at different stages of the development process. 
 We built our testing framework around the need to support all of unit\nobreakdash-, integration\nobreakdash-, and system\nobreakdash-level testing, with both automatic and manual test generation in mind.
 
-In \textit{unit-level testing}, the developer is only concerned with the correctness of a single method - all the outgoing method calls can be stubbed to mimic a particular scenario. 
+In \textit{unit-level testing}, the developer is only concerned with the correctness of a single function - all the outgoing function calls can be stubbed to mimic a particular scenario. 
 We introduce this kind of testing to Dafny by supporting the automatic compilation of external methods that return mocked objects. 
 The compiler uses the postconditions constraining the returned object in Dafny to set up the mock in the target language using the appropriate mocking library.
 
@@ -58,16 +59,79 @@ This kind of testing does not require the addition of any special features to th
 
 All runtime tests for Dafny make use of the \textit{assertion library}, which is designed so that the behavior tested at runtime is also verified by Dafny before compilation. 
 
+
 \section{Design and Implementation}
-\label{design}
+\label{sec:design}
+
+Support for mocking and unit testing is, implementation-wise, the most complex part of the proposed testing framework. 
+The challenge lies in mapping the postconditions written in Dafny to method calls in the target language's mocking framework. Table \ref{tab:mocking} illustrates how this mapping is carried out in C\# and Java. 
+We support the most general approach to function call stubbing that is also supported by the target mocking frameworks - the user can supply an arbitrary expression over the function arguments that is evaluated instead of the function body at runtime. 
+Additionally, the developer can specify stubbed function calls as implications, where the premise determines when a function call should be stubbed and the consequence describes how it should be stubbed. 
+
+Despite this generality, not any Dafny postcondition can be successfully compiled in this manner - this is because such a postcondition may not always equate the result of a given function call to a specific value and may instead constrain the result in terms of other function calls.
+For instance, a postcondition might define a boolean formula over several function predicates. 
+Solving for exact values that the predicates must evaluate to is, in this case, an instance of the satisfiability problem, which is NP-complete.
+Hence, we are only able to compile a select portion of Dafny postconditions that can be mapped directly to method calls in the target mocking frameworks. 
+Figure \ref{grammar} provides the grammar of supported postconditions.
 
 
+\begin{figure}[h]
+\begin{lstlisting}[language=c,basicstyle=\ttfamily\footnotesize]
+S       = FORALL | EQUALS | S && S
+EQUALS  = ID . ID (ID_LIST) == EXP // stubs method call
+        | ID . ID == EXP // stubs field access
+FORALL  = forall ARGS :: EXP ==> EQUALS
+ID_LIST = ID | ID, ID_LIST
+ARGS    = ID : TYPE | ARGS, ARGS
+\end{lstlisting}
+\caption{The grammar of postconditions supported by the mocking framework. Non-terminal \texttt{EXP} stands for an arbitrary Dafny expression, \texttt{ID} stands for a variable or function identifier name and \texttt{TYPE} stands for a type identifier name.}
+\label{grammar}
+\end{figure}
+
+Because methods, as opposed to functions, may have side-effects, Dafny does not admit method calls in postconditions. 
+This makes stubbing methods that have post-conditions impossible.
+In particular, we do not allow stubbing methods in such a way that they return different values after a certain number of calls. 
+
+
+\begin{table}[!htbp]
+\begin{center}
+\begin{tabularx}{\linewidth}{|>{\hsize=.7\hsize\linewidth=\hsize}X|
+>{\hsize=.8\hsize\linewidth=\hsize}X|>{\hsize=.8\hsize\linewidth=\hsize}X|>{\hsize=.8\hsize\linewidth=\hsize}X|}
+ \hline
+	\textbf{Meaning} & \textbf{Dafny} & \thead{\textbf{Java}\\\textbf{(JUnit/Mockito)}} & \thead{\textbf{C\#}\\\textbf{(Xunit/Moq)}} \\ 
+ \hline
+ \hline
+ A test method with no arguments. & \texttt{\{:test\}} attribute & \
+ \texttt{@Test} annotation & \texttt{[Fact]} annotation \\
+ \hline
+ A test method executed multiple times with arguments supplied by the provider method \texttt{M}. & \thead{\texttt{\{:test M\}} \\ attribute} & \texttt{@ParameterizedTest} and \texttt{@MethodSource} annotations & \texttt{[Theory]} and \texttt{[MemberData]} annotations\\
+ \hline
+ Method returns an unconstrained fresh object & \thead{\texttt{\{:fresh\}} \\ attribute} & \multicolumn{2}{>{\hsize=1.6\hsize\linewidth=\hsize}X|}{Exploiting the zero-argument constructor} \\
+ \hline
+ Method returns a mocked object of type \texttt{Clazz}. & \texttt{\{:mock\}} attribute & \texttt{Mockito} \texttt{.mock(Clazz.class)} & \texttt{new} \texttt{Moq.Mock<Clazz>()}
+ \texttt{.Object} \\
+ \hline
+ Stubbing function \texttt{Do} of the mocked return parameter &  \thead{\texttt{ensures} \\ \texttt{o.Do() == 0}} & \texttt{Mockito} \texttt{.doReturn(0)} \texttt{.when(o).Do()} & \texttt{m.Setup(o=>o.Do())} \texttt{.Returns(0)} \\
+ \hline
+ Stubbing a function call under specified conditions & \thead{\texttt{ensures} \\ \texttt{forall a,b:int ::} \\ \texttt{a == b ==>} \\ \texttt{o.Do(a, b) == 0}} & \multicolumn{2}{>{\hsize=1.6\hsize\linewidth=\hsize}X|}{Custom Argument Matcher for converting a predicate of $n$ arguments into $n$ predicates of one argument each.} \\
+ \hline
+ Stubbing a function call with a return value that depends on the arguments & \thead{\texttt{ensures}\\\texttt{forall a:int ::}\\\texttt{(o.Do(a) == a)}} & Passing a lambda to Mockito's \texttt{thenAnswer} & Passing a lambda to Moq's \texttt{Returns}\\
+ \hline
+\end{tabularx}
+\end{center}
+\caption{The mapping from introduced method annotations and supported postconditions in Dafny to the corresponding instructions in Java and C\#.}
+\label{tab:mocking}
+\end{table}
 
 \section{Conclusions and Future Work}
-\label{future}
+\label{sec:future}
 
-\newpage
-\bibliographystyle{splncs04}
-\bibliography{references}
+The proposed testing framework opens new possibilitie for automatic test generation.
+Since the expected runtime behavior of a function is specified by its postconditions, it should be possible to automatically generate tests that verify that the expected behavior is observed at runtime. 
+Such a testing framework would be invaluable for testing new compilers and would provide additional level of assurance to developers who use a lot of external functions.
+
+%\newpage
+%\bibliographystyle{splncs04}
+%\bibliography{references}
 
 \end{document}
