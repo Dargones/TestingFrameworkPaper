@@ -77,14 +77,20 @@ Figure \ref{grammar} provides the grammar of supported postconditions.
 
 \begin{figure}[h]
 \begin{lstlisting}[language=c,basicstyle=\ttfamily\footnotesize]
-S       = FORALL | EQUALS | S && S
-EQUALS  = ID . ID (ID_LIST) == EXP // stubs method call
-        | ID . ID == EXP // stubs field access
-FORALL  = forall ARGS :: EXP ==> EQUALS
-ID_LIST = ID | ID, ID_LIST
-ARGS    = ID : TYPE | ARGS, ARGS
+S       = FORALL 
+        | EQUALS 
+        | S && S
+EQUALS  = ID.ID (ARGLIST)  == EXP // stubs a method call
+        | ID.ID            == EXP // stubs field access
+        | EQUALS && EQUALS
+FORALL  = forall SKOLEMS :: EXP ==> EQUALS
+ARGLIST = ID  // this can be one of the skolem variables
+        | EXP // this exp may not reference any of the skolems 
+        | ARG_LIST, ARG_LIST
+SKOLEMS = ID : ID 
+        | SKOLEMS, SKOLEMS
 \end{lstlisting}
-\caption{The grammar of postconditions supported by the mocking framework. Non-terminal \texttt{EXP} stands for an arbitrary Dafny expression, \texttt{ID} stands for a variable or function identifier name and \texttt{TYPE} stands for a type identifier name.}
+\caption{The grammar of postconditions supported by the mocking framework. Non-terminal \texttt{EXP} stands for an arbitrary Dafny expression, \texttt{ID} stands for a variable or type identifier.}
 \label{grammar}
 \end{figure}
 
