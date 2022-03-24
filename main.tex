@@ -59,6 +59,32 @@ This kind of testing does not require the addition of any special features to th
 
 All runtime tests for Dafny make use of the \textit{assertion library}, which is designed so that the behavior tested at runtime is also verified by Dafny before compilation. 
 
+Ideally, all semantic behaviors present in the Dafny model are preserved after cross-compilation to C\# or Java. 
+However, we have found this is not the case. 
+By including additional well-known assertion libraries for our target languages, we can discover such bugs in the cross-compiler.
+
+Figure \ref{compilerBug} details an example of impedance mismatch. 
+Due to the type constructor, Dafny will not allow the assignment of a negative integer to an uint32-typed variable. 
+However, Java has no primitive type for unsigned integers, so the constant is converted by the Java compiler to a signed integer.
+
+\begin{figure}[h]
+NativeTypes.dfy
+\begin{lstlisting}[language=dafny,basicstyle=\ttfamily\footnotesize]
+module NativeTypes {
+    newtype uint32 = i:int | 0 <= i < 0x100000000
+    const UINT32_MAX :uint32 := 0xffffffff;
+}
+\end{lstlisting}
+NativeTypes.java
+\begin{lstlisting}[language=java,basicstyle=\ttfamily\footnotesize]
+public static int UINT32__MAX()
+{
+    return -1;
+}
+\end{lstlisting}
+\caption{An example of a Java compiler bug.  UINT32\_\_MAX is defined as -1 despite its type definition.}
+\label{compilerBug}
+\end{figure}
 
 \section{Design and Implementation}
 \label{sec:design}
@@ -98,6 +124,14 @@ Because methods, as opposed to functions, may have side-effects, Dafny does not 
 This makes stubbing methods that have post-conditions impossible.
 In particular, we do not allow stubbing methods in such a way that they return different values after a certain number of calls. 
 
+Another difficulty in connecting the source and target framework stems from Dafny's use of proprietary types. 
+This presents issues when writing parameterized unit tests with a method source, as the return type differs from what the testing libraries expect. 
+Our solution injects an intermediary method source that handles the conversion.
+
+Our implementation requires each parameterized test and method source to be a Dafny method. 
+The method source must be declared static. 
+The return type of the method source must be a sequence of tuples. 
+Lastly, the types inside each tuple must match the types of the test method's parameters.
 
 \begin{table}[!htbp]
 \begin{center}
